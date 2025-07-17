@@ -1,0 +1,62 @@
+pipeline {
+    agent any 
+    environment {
+        GITHUB_TOKEN = credentials('github-token') // Retrieve the Git token from Jenkins credentials
+    }
+    stages {
+        stage ("Clean up"){
+            steps {
+                 deleteDir()
+            }
+        }
+        stage('Checkout') {
+            steps {
+              git url: 'https://github.com/Raouf-Rhimi/astonvilla-app.git'
+            }
+        }
+        stage('Run Sonar Server') {
+            steps {
+              sh "docker-compose -f sonar-docker-compose.yaml up -d"
+            }
+        }
+        stage ("Generate docker image") {
+            steps {
+                sh "docker build -t kakachisensei/astonvilla-app:1.1.${env.BUILD_NUMBER} ."
+            }
+        }
+        stage ("push docker image") {
+            steps {
+              sh "docker push kakachisensei/astonvilla-app:1.1.${env.BUILD_NUMBER}"
+            }
+        }
+        stage ("clone gitops repo") {
+            steps {
+              sh "git clone https://github.com/Raouf-Rhimi/argocd.git"
+            }
+        }
+        stage ("change image tag") {
+            steps {
+             dir('argocd/astonvilla-app'){
+                script{
+                  def deployment = readFile('astonvilla-deployment.yaml')
+                  def updatedDeployment = deployment.replaceAll(/astonvilla-app:\s*[\w.-]+/, "astonvilla-app:1.1.${env.BUILD_NUMBER}")
+                  writeFile file: 'astonvilla-deployment.yaml', text: updatedDeployment
+                }
+              }
+            }
+        }
+         stage ("commit changes") {
+            steps {
+            dir('argocd/astonvilla-app'){
+                script{
+                      sh 'git config user.email "jenkins@agent.com"'
+                      sh 'git config user.name "jenkins-admin"'
+                      sh 'git add astonvilla-deployment.yaml'
+                      sh 'git commit -m "updated image tag"'
+                      sh 'git push https://Raouf-Rhimi:${GITHUB_TOKEN}@github.com/Raouf-Rhimi/argocd.git master'
+                }
+              }
+            }
+        }
+    }
+}
